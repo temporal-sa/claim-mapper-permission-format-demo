@@ -1,0 +1,99 @@
+# End-to-end stack: Keycloak (local IdP) + Temporal server + Temporal UI.
+#
+# Server config comes only from environment variables (the image's embedded
+# config template), so nothing here is a custom server build.
+#
+#   docker compose up -d                                  # correct regex
+#   PERMISSIONS_REGEX=_ROLE_ docker compose up -d         # the customer's original regex (no named groups)
+#
+# Ports: Keycloak http://localhost:8180, UI http://localhost:8233,
+#        Temporal gRPC localhost:7233, Temporal HTTP API http://localhost:7243
+name: permissionsregex-e2e
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # Browser-facing URLs and the token issuer use localhost:8180; calls from
+      # other containers (token exchange, JWKS) use http://keycloak:8080.
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports:
+      - "8180:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  temporal:
+    image: temporalio/server:1.32.1
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      DB: sqlite
+      DBNAME: /home/temporal/temporal.db
+      VISIBILITY_DBNAME: /home/temporal/visibility.db
+      # The server's own system worker connects through internal-frontend, so it
+      # doesn't need a token.
+      USE_INTERNAL_FRONTEND: "true"
+      TEMPORAL_SERVICES: frontend,internal-frontend,history,matching,worker
+      # global.authorization
+      TEMPORAL_AUTH_AUTHORIZER: default
+      TEMPORAL_AUTH_CLAIM_MAPPER: default
+      TEMPORAL_JWT_KEY_SOURCE1: http://keycloak:8080/realms/temporal/protocol/openid-connect/certs
+      TEMPORAL_JWT_PERMISSIONS_CLAIM: roles
+      TEMPORAL_JWT_PERMISSIONS_REGEX: ${PERMISSIONS_REGEX:-'^(?P<namespace>.+)_ROLE_(?P<role>read|write|worker|admin)$$'}
+    volumes:
+      - temporal-data:/home/temporal
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    ports:
+      - "7233:7233"
+      - "7243:7243"
+
+  # One-shot: creates the two namespaces and a sample workflow in other-team,
+  # using an admin token from the temporal-admin service account.
+  temporal-setup:
+    image: temporalio/admin-tools:1.32.1
+    depends_on:
+      temporal:
+        condition: service_started
+    entrypoint: ["sh", "/setup/setup.sh"]
+    volumes:
+      - ./setup.sh:/setup/setup.sh:ro
+    restart: "no"
+
+  temporal-ui:
+    image: temporalio/ui:2.53.3
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_DEFAULT_NAMESPACE: xyz-deployment
+      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+      TEMPORAL_CSRF_COOKIE_INSECURE: "true"
+      TEMPORAL_AUTH_ENABLED: "true"
+      TEMPORAL_AUTH_TYPE: oidc
+      TEMPORAL_AUTH_PROVIDER_URL: http://keycloak:8080/realms/temporal
+      TEMPORAL_AUTH_ISSUER_URL: http://localhost:8180/realms/temporal
+      TEMPORAL_AUTH_CLIENT_ID: temporal-ui
+      TEMPORAL_AUTH_CLIENT_SECRET: temporal-ui-demo-secret
+      TEMPORAL_AUTH_CALLBACK_URL: http://localhost:8233/auth/sso/callback
+      TEMPORAL_AUTH_SCOPES: openid,profile,email
+      # Default: the UI sends the ACCESS token in the Authorization header.
+      TEMPORAL_AUTH_USE_ID_TOKEN_AS_BEARER: "false"
+    ports:
+      - "8233:8080"
+
+volumes:
+  temporal-data:

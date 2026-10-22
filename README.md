@@ -1,203 +1,87 @@
 # claim-mapper-permission-format-demo
 
-**Temporal claim mapper: permission formats without ":"**
+**Temporal SSO with role names that don't use ":"**
 
-This demo shows that Temporal's **built-in** JWT claim mapper accepts permission
-claim values in formats other than `<namespace>:<role>`, such as
-`<namespace>_<role>` or `<namespace>-<role>`.
+## The problem
 
-It's a configuration setting, `permissionsRegex`. You don't need a custom claim
-mapper, a plugin, or a custom server build.
+Temporal's default claim mapper expects roles in the format
+`<namespace>:<role>`, for example `payments:write`. Many identity providers
+can't emit `:`, so roles look like `payments_write` or
+`xyz-deployment_ROLE_write` instead. Two things then go wrong:
 
-## The question this answers
+1. **The roles don't map.** The server ignores them, so every call is denied.
+2. **The Temporal UI won't load,** even once the roles map. After logging in,
+   the user is sent straight back to the login page, because
+   `GET /api/v1/namespaces` returns **403**.
 
-> The claim *name* is configurable, but the claim *value* format is hardcoded to
-> `<namespace>:<rolename>`. Our organization doesn't allow ":" in claim values.
-> Can the separator be made configurable, e.g. `<namespace>_<rolename>` or
-> `<namespace>-<rolename>`?
+## The fix
 
-**Answer:** yes, and it already is. Since server **v1.29.0**, the default claim
-mapper accepts a regular expression (`global.authorization.permissionsRegex`)
-that defines how to pull the namespace and role out of each permission value.
-Any separator works, or none, and the order of namespace and role can even be
-reversed.
-
-## What the demo runs (and what it doesn't)
-
-**It runs the real server code, not a re-implementation.** `main.go` imports
-`go.temporal.io/server` v1.32.1 and calls the same function the Temporal server
-uses to process every incoming token:
-
-```go
-authorization.NewDefaultJWTClaimMapper(keyProvider, cfg, logger)
-```
-
-`cfg` is `config.Authorization`, the same Go struct the server fills in from
-the `global.authorization` section of its YAML config. Setting
-`PermissionsRegex` in the demo is exactly what setting `permissionsRegex:` in
-the YAML does.
-
-For each scenario, the demo:
-
-1. Creates a JWT with a `permissions` claim in the format being tested, and
-   signs it with a throwaway RSA key.
-2. Passes it to the claim mapper as a `Bearer` token, exactly as a client SDK
-   would send it.
-3. Prints the namespace and role grants the mapper produced. These grants are
-   what Temporal's authorizer uses to allow or deny every API call.
-
-**Why this is enough to prove the point.** The claim mapper is the only part
-of the server that reads the permission string. It turns `payments_write` into
-"namespace `payments` → role `write`". After that step the authorizer only sees
-the result, never the original string, so the separator has no effect on
-anything downstream. If two formats produce the same grants (compare scenarios A
-and C below), the server treats them the same.
-
-**What it does not do:** it doesn't start a Temporal server or make API calls
-against one. Key retrieval from a JWKS URL is replaced by a static in-memory
-key, the one part of the token pipeline that is stubbed. Neither affects how
-permission values are parsed.
-
-## Prerequisites
-
-- Go **1.26.8 or newer**, which the v1.32.1 server module requires. If your Go is
-  older, Go downloads 1.26.8 automatically the first time you build.
-- Network access the first time you run it, to download modules.
-
-## Run
-
-```bash
-go run .
-```
-
-`go.mod` and `go.sum` are included, so no other setup is needed.
-
-## Scenarios and expected output
-
-The token in each scenario holds the same five grants written in the format
-being tested: `temporal-system` read (cluster-wide), `payments` write,
-`payments_prod` admin, `orders` read, plus one entry for an unrelated
-application (`billing_viewer`). Scenario A uses the plain colon format and
-leaves out `payments_prod` and `billing`.
-
-| | Config | Token permissions | Result |
-|---|---|---|---|
-| **A** | default (no regex) | `payments:write`, `orders:read`, … | ✅ maps: the standard format, as a baseline |
-| **B** | default (no regex) | `payments_write`, `orders_read`, … | ❌ **nothing maps**: the problem described above |
-| **C** | `permissionsRegex` for `_` | `payments_write`, `payments_prod_admin`, … | ✅ maps, same grants as A plus `payments_prod` |
-| **D** | `permissionsRegex` for `-` | `payments-write`, `payments-prod-admin`, … | ✅ maps, same as C |
-
-Actual output:
-
-```
-=== A. Default config, colon format (baseline) ===
-permissionsRegex : ""
-token permissions: [temporal-system:read payments:write orders:read]
-RESULT: subject=demo-service-account system=read
-        namespace orders             -> read
-        namespace payments           -> write
-
-=== B. Default config, underscore format (the problem) ===
-permissionsRegex : ""
-token permissions: [temporal-system_read payments_write payments_prod_admin orders_read billing_viewer]
-RESULT: subject=demo-service-account system=none
-        namespaces: (none mapped)
-
-=== C. permissionsRegex, underscore separator ===
-permissionsRegex : "^(?P<namespace>.+)_(?P<role>read|write|worker|admin)$"
-token permissions: [temporal-system_read payments_write payments_prod_admin orders_read billing_viewer]
-RESULT: subject=demo-service-account system=read
-        namespace orders             -> read
-        namespace payments           -> write
-        namespace payments_prod      -> admin
-
-=== D. permissionsRegex, hyphen separator ===
-permissionsRegex : "^(?P<namespace>.+)-(?P<role>read|write|worker|admin)$"
-token permissions: [temporal-system-read payments-write payments-prod-admin orders-read billing-viewer]
-RESULT: subject=demo-service-account system=read
-        namespace orders             -> read
-        namespace payments           -> write
-        namespace payments-prod      -> admin
-```
-
-What to notice:
-
-- **B vs. C:** the token is identical. The only change is one config value, and
-  it takes the result from "no access" to the correct grants.
-- **A vs. C:** `payments` and `orders` get the same roles from either format.
-  Downstream of the mapper, the two are the same.
-- **`payments_prod_admin` → `payments_prod` / `admin`:** namespaces that contain
-  the separator still parse correctly. The role is anchored to the end of the
-  string and limited to the four valid role names, so the namespace part
-  matches greedily up to the last separator. A simple "split on `_`" setting
-  couldn't do this.
-- **`billing_viewer` is ignored:** `viewer` isn't a Temporal role, so the entry
-  doesn't match and is skipped. This lets a shared identity provider keep
-  entries for other applications in the same claim.
-- **`temporal-system_read` → `system=read`:** cluster-wide permissions use the
-  same format, with the reserved namespace `temporal-system`.
-
-## Server configuration
-
-The setting for scenario C in the server's YAML config:
+**1. Tell the server how to read your role format** with `permissionsRegex`.
+This is a built-in setting; no custom build is needed (server v1.29.0+):
 
 ```yaml
 global:
   authorization:
     authorizer: default
     claimMapper: default
-    permissionsClaimName: permissions      # name of the JWT claim to read
-    permissionsRegex: '^(?P<namespace>.+)_(?P<role>read|write|worker|admin)$'
-    jwtKeyProvider:
-      keySourceURIs:
-        - https://idp.example.com/.well-known/jwks.json
-      refreshInterval: 1m
+    permissionsClaimName: roles
+    permissionsRegex: '^(?P<namespace>.+)_ROLE_(?P<role>read|write|worker|admin)$'
 ```
 
-For `-`, replace `_` in the regex with `-`.
+Get two details exactly right, because both fail silently:
 
-### How to write the regex
+- The key is **`permissionsRegex`**. `PermissionsRegex` and `permissionRegex`
+  are ignored, with no error.
+- The regex needs **two named groups, `namespace` and `role`**. A regex like
+  `_ROLE_` is thrown away, with only a warning in the server log.
 
-- It must contain two named groups, `(?P<namespace>...)` and `(?P<role>...)`.
-  Their order in the string doesn't matter.
-- Valid roles are `read`, `write`, `worker`, and `admin`. Listing them
-  explicitly, as above, is recommended: namespaces can then contain the
-  separator, and entries with unknown roles are skipped instead of misparsed.
-- Anchor it with `^` and `$` so that only whole values match.
-- Each permission value is matched separately. Values that don't match are
-  ignored and a warning is logged.
+**2. Give UI users a system-level role**, for example
+`temporal-system_ROLE_read`, in their **access token**. The UI's first two
+calls (`ListNamespaces`, `GetClusterInfo`) are cluster-level, and the server
+only allows them for users with a `temporal-system` role. Namespace roles,
+even `admin`, aren't enough.
 
-### ⚠️ A broken regex fails quietly
+## The catch
 
-If the regex fails to compile, or is missing the `namespace` or `role` group,
-the server **does not fail to start**. It logs one warning and falls back to
-`<namespace>:<role>` parsing. With a `_` or `-` format, every permission then
-silently stops matching, and every call is denied.
+`temporal-system_ROLE_read` lets the user **read every namespace**, not just
+their own. It doesn't let them write anywhere they have no role. If that's not
+acceptable, the alternative is a custom server build. See
+[Caveats](docs/reference.md#caveats).
 
-Test your exact regex and some real token values before you deploy. This demo is
-a quick way to do that: edit the `PermissionsRegex` and permission lists in
-`main.go` (scenarios C and D), then run `go run .`.
+## See it in 5 minutes
 
-## Version requirements
+You need Docker. Stop any `temporal server start-dev` first: it uses the same
+ports, and the UI shows a blank page if both are running.
 
-| Component | Requirement |
+1. **Start** Keycloak, the Temporal server and the UI:
+
+   ```bash
+   docker compose -f e2e/compose.yaml up -d
+   ```
+
+   Wait about a minute.
+
+2. **Without the system role:** open http://localhost:8233 in a private
+   window, click **Continue to SSO**, and log in as **`ns-only`** with password
+   **`demo-password`**.
+   You're sent back to the "Welcome back" page. This is the 403 problem.
+
+3. **With the system role:** open a **new** private window, go to
+   http://localhost:8233, and log in as **`ns-plus-system`** with the same
+   password.
+   The Workflows page loads. The fix works.
+
+4. **Stop** everything:
+
+   ```bash
+   docker compose -f e2e/compose.yaml down -v
+   ```
+
+## More detail
+
+| Document | What's in it |
 |---|---|
-| Temporal server (self-hosted) | **v1.29.0 or newer**. `permissionsRegex` was added in [temporalio/temporal#7574](https://github.com/temporalio/temporal/pull/7574). Earlier versions only support `<namespace>:<role>`. |
-| Demo build | Go 1.26.8+; the demo uses server module v1.32.1 |
-
-This applies to the open-source server's default claim mapper. Temporal Cloud
-uses its own authentication and authorization and isn't configured this way.
-
-## Source references (server v1.32.1)
-
-- Config field and its documentation: [`common/config/config.go`](https://github.com/temporalio/temporal/blob/v1.32.1/common/config/config.go) (`Authorization.PermissionsRegex`)
-- Regex compilation and fallback: [`common/authorization/default_jwt_claim_mapper.go`](https://github.com/temporalio/temporal/blob/v1.32.1/common/authorization/default_jwt_claim_mapper.go) (`NewDefaultJWTClaimMapper`)
-- Per-permission parsing: same file, `extractPermissions`
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `main.go` | The demo: signs test tokens and runs them through the real claim mapper |
-| `go.mod`, `go.sum` | Pinned dependencies (`go.temporal.io/server` v1.32.1) |
-| `README.md` | This document |
+| [UI walkthrough](docs/ui-walkthrough.md) | All four UI tests, including the caveat and the broken regex, and `verify.sh` |
+| [Inspecting tokens in developer tools](docs/ui-walkthrough.md#inspecting-tokens-and-requests-in-developer-tools) | How to see the 403s, find the tokens in the browser, decode them, and check which header carries which token |
+| [Go demo](docs/go-demo.md) | `go run .`: runs the real server code on test tokens for every format and failure mode, with no Docker needed |
+| [Reference](docs/reference.md) | Troubleshooting, caveats, what was confirmed and how, versions, source links, files |
