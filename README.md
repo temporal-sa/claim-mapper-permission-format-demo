@@ -18,7 +18,7 @@ The repo has two parts:
 | Part | What it runs | Needs |
 |---|---|---|
 | [Go demo](#part-1-go-demo-go-run-) (`go run .`) | The real claim mapper, authorizer and config loader from `go.temporal.io/server` v1.32.1, in-process | Go |
-| [End-to-end stack](#part-2-end-to-end-stack-e2e) (`e2e/`) | Keycloak + Temporal server 1.32.1 + Temporal UI 2.53.3 in Docker, logging in through the browser | Docker, `curl`, `jq` |
+| [Try it in the UI](#part-2-try-it-in-the-temporal-ui-e2e) (`e2e/`) | Keycloak + Temporal server 1.32.1 + Temporal UI 2.53.3 in Docker, logging in through the browser | Docker, `curl`, `jq` |
 
 ## The short answer
 
@@ -220,70 +220,148 @@ What to notice:
 
 ---
 
-## Part 2: End-to-end stack (`e2e/`)
+## Part 2: Try it in the Temporal UI (`e2e/`)
 
-Everything runs in Docker using stock images. The Temporal server is configured
-only through the environment variables its image already supports
-(`TEMPORAL_JWT_PERMISSIONS_CLAIM`, `TEMPORAL_JWT_PERMISSIONS_REGEX`, …), so
-nothing here is a custom build.
+This part runs a real Temporal server, the Temporal UI and a login server
+(Keycloak) on your machine in Docker. You log in as two test users and see the
+problem and the fix in the browser. Everything uses stock images, configured
+only through environment variables; there is no custom server build.
 
-| Service | Image | URL |
-|---|---|---|
-| Keycloak (local IdP, realm `temporal`) | `quay.io/keycloak/keycloak:26.4` | http://localhost:8180 (admin console: `admin` / `admin`) |
-| Temporal server | `temporalio/server:1.32.1` | gRPC `localhost:7233`, HTTP API http://localhost:7243 |
-| Temporal UI | `temporalio/ui:2.53.3` | http://localhost:8233 |
-| One-shot setup | `temporalio/admin-tools:1.32.1` | creates namespaces `xyz-deployment` and `other-team`, and one workflow in `other-team` |
+### Step 1: Before you start
 
-Keycloak emits the realm roles in a `roles` claim **in the access token only**
-(not in the ID token), which matches what the server needs.
+- **Docker must be running.**
+- **Free up the ports.** The stack uses ports 7233, 7243, 8180 and 8233. A
+  `temporal server start-dev` uses 7233 and 8233 too, so stop it first.
+  Docker does **not** warn you about this clash; the UI just shows a blank
+  page. To check, run:
 
-Test users (password `demo-password` for both, defined in
-[`e2e/keycloak/temporal-realm.json`](e2e/keycloak/temporal-realm.json)):
+  ```bash
+  lsof -nP -iTCP:8233 -sTCP:LISTEN
+  ```
 
-| User | `roles` in the access token |
-|---|---|
-| `ns-only` | `xyz-deployment_ROLE_read`, `xyz-deployment_ROLE_write`, `xyz-deployment_ROLE_admin` |
-| `ns-plus-system` | the same, plus `temporal-system_ROLE_read` |
+  Before you start the stack this should print nothing. After you start it,
+  the only line should be `com.docker`.
+- **Use a private (incognito) browser window** for each login. This stops an
+  old login or old cached pages from getting in the way.
 
-### Run it
+### Step 2: Start the stack
+
+From the repo root:
 
 ```bash
 docker compose -f e2e/compose.yaml up -d
 ```
 
-The first start pulls images and takes a minute or two. `docker compose -f e2e/compose.yaml ps -a`
-should show `temporal-setup` as `Exited (0)`.
-
-The stack uses host ports 7233, 7243, 8180 and 8233. Stop anything else
-using them first.
-
-### Stop it
-
-Run from the repo root. To stop and remove everything, including the
-`temporal-data` volume (namespaces and the sample workflow are recreated on the
-next `up`):
+Wait about a minute (longer the first time, while images download). It's ready
+when this shows `temporal-setup` as `Exited (0)` and the other three as `Up`:
 
 ```bash
-docker compose -f e2e/compose.yaml down -v
+docker compose -f e2e/compose.yaml ps -a
 ```
 
-To stop the containers but keep the namespaces and workflow for next time,
-leave off `-v`:
+Setup creates two namespaces, `xyz-deployment` and `other-team`, and one
+workflow in `other-team` called `other-team-sample`.
+
+### Step 3: The test users
+
+Log in to the UI with these. Both use the password **`demo-password`**.
+
+| Username | Roles in the token | What should happen |
+|---|---|---|
+| `ns-only` | `xyz-deployment_ROLE_read`, `_write`, `_admin` | ❌ UI won't load: you're sent back to the login page |
+| `ns-plus-system` | the same, plus `temporal-system_ROLE_read` | ✅ UI loads |
+
+The users are defined in
+[`e2e/keycloak/temporal-realm.json`](e2e/keycloak/temporal-realm.json).
+
+### Step 4: Run the tests in the UI
+
+Open the UI at **http://localhost:8233**. Each test starts in a **new private
+window**, so you're logged out.
+
+#### Test A: namespace roles only, the UI is blocked (the customer's problem)
+
+1. Open http://localhost:8233.
+2. Optional: open the browser's developer tools on the **Network** tab, so you
+   can see the 403.
+3. Click **Continue to SSO**.
+4. Log in as **`ns-only`**.
+
+**Expected:** the login works, but you land back on the "Welcome back" page
+instead of seeing workflows. In the Network tab, the requests named
+`namespaces` and `cluster-info` show status **403**.
+
+**Why:** the UI calls `ListNamespaces` and `GetClusterInfo` on every page.
+Those are cluster-level calls, and the server only allows them for users with a
+`temporal-system` role. Admin on a namespace isn't enough.
+
+You can also see the 403s from the terminal:
 
 ```bash
-docker compose -f e2e/compose.yaml down
+docker compose -f e2e/compose.yaml logs --no-log-prefix temporal-ui | grep -E 'api/v1/(namespaces|cluster-info)\?' | jq -r '[.method, .uri, .status] | @tsv'
 ```
 
-### 1. Correct regex: check the API
+#### Test B: add the system role, the UI works (the fix)
+
+1. Open a new private window and go to http://localhost:8233.
+2. Click **Continue to SSO** and log in as **`ns-plus-system`**.
+
+**Expected:** the **Workflows** page for `xyz-deployment` loads (it shows
+0 workflows).
+
+#### Test C: what the system role also gives access to (the caveat)
+
+1. Still logged in as `ns-plus-system`, click the namespace picker at the top
+   left of the page (it shows `xyz-deployment`) and choose **`other-team`**.
+
+**Expected:** you can see the `other-team-sample` workflow, even though this
+user has no role on `other-team`. `temporal-system_ROLE_read` gives read
+access to **every** namespace. (It doesn't allow writes there; Step 5 shows
+that.)
+
+#### Test D: the broken regex, nobody gets in (the customer's original config)
+
+1. Restart the server with the customer's original regex, `_ROLE_`, which has
+   no named groups:
+
+   ```bash
+   PERMISSIONS_REGEX=_ROLE_ docker compose -f e2e/compose.yaml up -d
+   ```
+
+2. Open a new private window and log in as **`ns-plus-system`**.
+
+**Expected:** you're sent back to the login page, just like `ns-only` in
+Test A. The roles are in the token, but the server can't read them. The server
+logs a warning when it starts:
+
+```bash
+docker compose -f e2e/compose.yaml logs temporal | grep "permissions regex"
+```
+
+```
+{"level":"warn","msg":"permissions regex does not have namespace or role named group",...}
+```
+
+The server still starts normally; this warning is the only sign.
+
+3. **Put the correct regex back** before doing anything else:
+
+   ```bash
+   docker compose -f e2e/compose.yaml up -d
+   ```
+
+### Step 5 (optional): the same checks from the command line
+
+[`e2e/verify.sh`](e2e/verify.sh) logs in as both users and calls the Temporal
+API directly, through the same permission checks the UI goes through. It needs
+`curl` and `jq`.
 
 ```bash
 ./e2e/verify.sh
 ```
 
-It gets an access token for each user from Keycloak, decodes it locally, and
-calls the Temporal frontend HTTP API with the token in the `Authorization`
-header. That path goes through the same claim mapper and authorizer as the
-UI's gRPC calls. Actual output:
+Output with the correct regex (`ALLOW` means the call worked, `DENY` means it
+got a 403):
 
 ```
 === Server config ===
@@ -291,8 +369,8 @@ permissionsRegex (env TEMPORAL_JWT_PERMISSIONS_REGEX): '^(?P<namespace>.+)_ROLE_
 regex warnings in server log: none
 
 === User: ns-only ===
-access token header : {"alg":"RS256","kid":"KkEuY7upqlaWh8FWU3sQdwYFDuEpTY0FkfGxW2M5xsg"}
-access token claims : {"sub":"f7d6dc59-66e5-4a5f-bac6-d53193fae16d","roles":["xyz-deployment_ROLE_write","xyz-deployment_ROLE_read","xyz-deployment_ROLE_admin"]}
+access token header : {"alg":"RS256","kid":"..."}
+access token claims : {"sub":"...","roles":["xyz-deployment_ROLE_write","xyz-deployment_ROLE_read","xyz-deployment_ROLE_admin"]}
   DENY  ListNamespaces               (cluster; UI calls this on every page)
   DENY  GetClusterInfo               (cluster; UI calls this on every page)
   ALLOW ListWorkflowExecutions       (namespace xyz-deployment: user has a role)
@@ -301,8 +379,8 @@ access token claims : {"sub":"f7d6dc59-66e5-4a5f-bac6-d53193fae16d","roles":["xy
   DENY  StartWorkflowExecution       (namespace other-team: no role in token)
 
 === User: ns-plus-system ===
-access token header : {"alg":"RS256","kid":"KkEuY7upqlaWh8FWU3sQdwYFDuEpTY0FkfGxW2M5xsg"}
-access token claims : {"sub":"3872ce13-1c5a-41f1-a0e7-c0688d5ca192","roles":["xyz-deployment_ROLE_write","xyz-deployment_ROLE_read","temporal-system_ROLE_read","xyz-deployment_ROLE_admin"]}
+access token header : {"alg":"RS256","kid":"..."}
+access token claims : {"sub":"...","roles":["xyz-deployment_ROLE_write","xyz-deployment_ROLE_read","temporal-system_ROLE_read","xyz-deployment_ROLE_admin"]}
   ALLOW ListNamespaces               (cluster; UI calls this on every page)
   ALLOW GetClusterInfo               (cluster; UI calls this on every page)
   ALLOW ListWorkflowExecutions       (namespace xyz-deployment: user has a role)
@@ -311,59 +389,35 @@ access token claims : {"sub":"3872ce13-1c5a-41f1-a0e7-c0688d5ca192","roles":["xy
   DENY  StartWorkflowExecution       (namespace other-team: no role in token)
 ```
 
-Same results as Go scenarios E and F.
+With the broken regex from Test D, every line is `DENY` for both users, and
+the script prints the server's warning.
 
-### 2. Correct regex: check the UI
+### Step 6: Stop the stack
 
-Open http://localhost:8233 and choose **Continue to SSO**.
-
-- **As `ns-only`:** Keycloak login succeeds, and the browser comes back to the
-  UI, which immediately calls `GET /api/v1/namespaces` and
-  `GET /api/v1/cluster-info`. Both return **403**, and the UI sends you back to
-  its "Welcome back" login page. This is the symptom the customer reported. In the UI
-  container log (`docker compose -f e2e/compose.yaml logs temporal-ui`) the requests show up as:
-
-  ```
-  GET /api/v1/namespaces?    403
-  GET /api/v1/cluster-info?  403
-  ```
-
-- **As `ns-plus-system`:** the UI loads the `xyz-deployment` workflow list.
-  Switching to the `other-team` namespace also works and shows the
-  `other-team-sample` workflow. The system read role reaches every namespace.
-
-To switch users, log out of Keycloak first: open
-http://localhost:8180/realms/temporal/protocol/openid-connect/logout, choose
-**Logout**, then go back to the UI.
-
-### 3. Broken regex: reproduce the silent fallback
-
-Restart the server with the customer's original regex:
+To stop and remove everything (the namespaces and workflow are recreated the
+next time you start it):
 
 ```bash
-PERMISSIONS_REGEX=_ROLE_ docker compose -f e2e/compose.yaml up -d
+docker compose -f e2e/compose.yaml down -v
 ```
 
-Then run `./e2e/verify.sh` again. Every call returns `DENY` for both users,
-including `ns-plus-system`, and the script prints the server's warning:
+To stop it but keep the namespaces and workflow, leave off `-v`:
 
-```
-permissionsRegex (env TEMPORAL_JWT_PERMISSIONS_REGEX): _ROLE_
-regex warnings in server log: permissions regex does not have namespace or role named group
+```bash
+docker compose -f e2e/compose.yaml down
 ```
 
-The full log line from the server is:
+### Reference: what's running
 
-```
-{"level":"warn","msg":"permissions regex does not have namespace or role named group","logging-call-at":".../common/authorization/default_jwt_claim_mapper.go:58"}
-```
+| Service | Image | Address |
+|---|---|---|
+| Temporal UI | `temporalio/ui:2.53.3` | http://localhost:8233 |
+| Keycloak (login server, realm `temporal`) | `quay.io/keycloak/keycloak:26.4` | http://localhost:8180 (admin console login: `admin` / `admin`) |
+| Temporal server | `temporalio/server:1.32.1` | gRPC `localhost:7233`, HTTP API http://localhost:7243 |
+| One-shot setup | `temporalio/admin-tools:1.32.1` | creates the namespaces and the sample workflow, then exits |
 
-followed by `ignoring permission in unexpected format: ...` for each role in
-each request. Setup also stops working, because the admin service account's
-`temporal-system_ROLE_admin` doesn't map either.
-
-Go back to the correct regex by running the same command without the variable.
-To shut the stack down, see [Stop it](#stop-it).
+Keycloak puts the user's roles in a `roles` claim **in the access token only**
+(not the ID token), which is what the Temporal server reads.
 
 ### Check which token reaches the server
 
