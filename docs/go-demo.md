@@ -45,6 +45,19 @@ a JWKS URL is replaced by a static in-memory key. The
 go run .
 ```
 
+## Tests
+
+[`main_test.go`](../main_test.go) turns scenarios E–H into assertions, using
+the same real server code, so a server upgrade that changes the behaviour
+fails loudly instead of just printing different output:
+
+```bash
+go test ./...
+```
+
+They also run on every pull request, through
+[`.github/workflows/test.yml`](../.github/workflows/test.yml).
+
 ## Scenarios
 
 | | Config | Token | Result |

@@ -80,6 +80,8 @@ and in PR #7574.
 | File | Purpose |
 |---|---|
 | [`main.go`](../main.go) | Go demo: signs test tokens, runs them through the real claim mapper, authorizer and config loader |
+| [`main_test.go`](../main_test.go) | Tests asserting Go demo scenarios E–H (`go test ./...`) |
+| [`.github/workflows/test.yml`](../.github/workflows/test.yml) | Runs `go vet` and `go test` on pull requests and pushes to `main` |
 | `go.mod`, `go.sum` | Pinned dependencies (`go.temporal.io/server` v1.32.1) |
 | `e2e/compose.yaml` | Keycloak + Temporal server + UI + setup |
 | `e2e/keycloak/temporal-realm.json` | Realm with roles, test users, and the `roles` access-token mapper |
