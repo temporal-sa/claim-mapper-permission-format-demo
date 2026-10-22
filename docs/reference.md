@@ -80,6 +80,7 @@ and in PR #7574.
 | File | Purpose |
 |---|---|
 | [`main.go`](../main.go) | Go demo: signs test tokens, runs them through the real claim mapper, authorizer and config loader |
+| [`Makefile`](../Makefile) | Shortcuts: `make up`, `make down`, `make verify` and others (run `make` to list them) |
 | [`main_test.go`](../main_test.go) | Tests asserting Go demo scenarios E–H (`go test ./...`) |
 | [`.github/workflows/test.yml`](../.github/workflows/test.yml) | Runs `go vet` and `go test` on pull requests and pushes to `main` |
 | `go.mod`, `go.sum` | Pinned dependencies (`go.temporal.io/server` v1.32.1) |

@@ -29,15 +29,14 @@ only through environment variables; there is no custom server build.
 From the repo root:
 
 ```bash
-docker compose -f e2e/compose.yaml up -d
+make up
 ```
 
-Wait about a minute (longer the first time, while images download). It's ready
-when this shows `temporal-setup` as `Exited (0)` and the other three as `Up`:
-
-```bash
-docker compose -f e2e/compose.yaml ps -a
-```
+This runs `docker compose -f e2e/compose.yaml up -d`, then waits for the
+one-shot `temporal-setup` container to finish, which takes about a minute
+(longer the first time, while images download). It prints `Ready.` and the UI
+address when the stack is usable. To check the containers yourself, run
+`make ps`: `temporal-setup` should be `Exited (0)` and the other three `Up`.
 
 Setup creates two namespaces, `xyz-deployment` and `other-team`, and one
 workflow in `other-team` called `other-team-sample`.
@@ -106,8 +105,10 @@ that.)
    no named groups:
 
    ```bash
-   PERMISSIONS_REGEX=_ROLE_ docker compose -f e2e/compose.yaml up -d
+   make up-broken
    ```
+
+   This runs `PERMISSIONS_REGEX=_ROLE_ docker compose -f e2e/compose.yaml up -d`.
 
 2. Open a new private window and log in as **`ns-plus-system`**.
 
@@ -128,7 +129,7 @@ The server still starts normally; this warning is the only sign.
 3. **Put the correct regex back** before doing anything else:
 
    ```bash
-   docker compose -f e2e/compose.yaml up -d
+   make up
    ```
 
 ## Step 5 (optional): the same checks from the command line
@@ -138,7 +139,7 @@ API directly, through the same permission checks the UI goes through. It needs
 `curl` and `jq`.
 
 ```bash
-./e2e/verify.sh
+make verify
 ```
 
 Output with the correct regex (`ALLOW` means the call worked, `DENY` means it
@@ -179,14 +180,17 @@ To stop and remove everything (the namespaces and workflow are recreated the
 next time you start it):
 
 ```bash
-docker compose -f e2e/compose.yaml down -v
+make down
 ```
 
-To stop it but keep the namespaces and workflow, leave off `-v`:
+To stop it but keep the namespaces and workflow:
 
 ```bash
-docker compose -f e2e/compose.yaml down
+make stop
 ```
+
+(`make down` runs `docker compose -f e2e/compose.yaml down -v`; `make stop`
+leaves off `-v`.)
 
 ## Reference: what's running
 

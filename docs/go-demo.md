@@ -45,6 +45,8 @@ a JWKS URL is replaced by a static in-memory key. The
 go run .
 ```
 
+or `make demo`.
+
 ## Tests
 
 [`main_test.go`](../main_test.go) turns scenarios E–H into assertions, using
@@ -54,6 +56,8 @@ fails loudly instead of just printing different output:
 ```bash
 go test ./...
 ```
+
+`make test` runs these plus `go vet`, as CI does.
 
 They also run on every pull request, through
 [`.github/workflows/test.yml`](../.github/workflows/test.yml).

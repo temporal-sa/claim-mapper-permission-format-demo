@@ -56,10 +56,11 @@ ports, and the UI shows a blank page if both are running.
 1. **Start** Keycloak, the Temporal server and the UI:
 
    ```bash
-   docker compose -f e2e/compose.yaml up -d
+   make up
    ```
 
-   Wait about a minute.
+   It waits until the stack is ready (about a minute the first time) and
+   prints the UI address.
 
 2. **Without the system role:** open http://localhost:8233 in a private
    window, click **Continue to SSO**, and log in as **`ns-only`** with password
@@ -74,8 +75,12 @@ ports, and the UI shows a blank page if both are running.
 4. **Stop** everything:
 
    ```bash
-   docker compose -f e2e/compose.yaml down -v
+   make down
    ```
+
+Run `make` on its own to list the other shortcuts (`verify`, `up-broken`,
+`logs`, `demo`, `test`, and more). Each one prints the `docker compose` or
+`go` command it runs, so you can also run that directly.
 
 ## More detail
 
