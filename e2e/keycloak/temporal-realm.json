@@ -1,0 +1,126 @@
+{
+  "realm": "temporal",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 3600,
+  "roles": {
+    "realm": [
+      { "name": "temporal-system_ROLE_read" },
+      { "name": "temporal-system_ROLE_admin" },
+      { "name": "xyz-deployment_ROLE_read" },
+      { "name": "xyz-deployment_ROLE_write" },
+      { "name": "xyz-deployment_ROLE_admin" }
+    ]
+  },
+  "users": [
+    {
+      "username": "ns-only",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Namespace",
+      "lastName": "Only",
+      "email": "ns-only@example.test",
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": false }],
+      "realmRoles": ["xyz-deployment_ROLE_read", "xyz-deployment_ROLE_write", "xyz-deployment_ROLE_admin"]
+    },
+    {
+      "username": "ns-plus-system",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Namespace",
+      "lastName": "PlusSystem",
+      "email": "ns-plus-system@example.test",
+      "credentials": [{ "type": "password", "value": "demo-password", "temporary": false }],
+      "realmRoles": ["xyz-deployment_ROLE_read", "xyz-deployment_ROLE_write", "xyz-deployment_ROLE_admin", "temporal-system_ROLE_read"]
+    },
+    {
+      "username": "service-account-temporal-admin",
+      "enabled": true,
+      "serviceAccountClientId": "temporal-admin",
+      "realmRoles": ["temporal-system_ROLE_admin"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "temporal-ui",
+      "name": "Temporal UI",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "temporal-ui-demo-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:8233/*"],
+      "webOrigins": ["http://localhost:8233"],
+      "attributes": { "post.logout.redirect.uris": "http://localhost:8233/*" },
+      "protocolMappers": [
+        {
+          "name": "roles-in-access-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "temporal-cli",
+      "name": "Verification script (password grant)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "roles-in-access-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "temporal-admin",
+      "name": "Setup service account",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "temporal-admin-demo-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "roles-in-access-token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}
