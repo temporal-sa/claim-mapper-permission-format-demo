@@ -254,6 +254,26 @@ docker compose -f e2e/compose.yaml up -d
 The first start pulls images and takes a minute or two. `docker compose -f e2e/compose.yaml ps -a`
 should show `temporal-setup` as `Exited (0)`.
 
+The stack uses host ports 7233, 7243, 8180 and 8233. Stop anything else
+using them first.
+
+### Stop it
+
+Run from the repo root. To stop and remove everything, including the
+`temporal-data` volume (namespaces and the sample workflow are recreated on the
+next `up`):
+
+```bash
+docker compose -f e2e/compose.yaml down -v
+```
+
+To stop the containers but keep the namespaces and workflow for next time,
+leave off `-v`:
+
+```bash
+docker compose -f e2e/compose.yaml down
+```
+
 ### 1. Correct regex: check the API
 
 ```bash
@@ -342,8 +362,8 @@ followed by `ignoring permission in unexpected format: ...` for each role in
 each request. Setup also stops working, because the admin service account's
 `temporal-system_ROLE_admin` doesn't map either.
 
-Go back to the correct regex by running the same command without the variable, and
-stop everything with `docker compose -f e2e/compose.yaml down -v`.
+Go back to the correct regex by running the same command without the variable.
+To shut the stack down, see [Stop it](#stop-it).
 
 ### Check which token reaches the server
 
