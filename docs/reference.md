@@ -10,7 +10,7 @@
 | Roles are in the token, but nothing maps; every call is denied | `permissionsRegex` is missing its named groups ([scenario G](go-demo.md)), or doesn't match your values, or the key is misspelled ([scenario H](go-demo.md)) | Use `permissionsRegex` exactly, with `(?P<namespace>…)` and `(?P<role>…)`, single-quoted in YAML. Test it with the [Go demo](go-demo.md). |
 | Server log shows `ignoring permission in unexpected format: …` for every role | The server is parsing `<namespace>:<role>`, so no regex is active: either it was never set, the key is misspelled, or it was discarded | Check startup logs for `permissions regex does not have namespace or role named group` or `failed to compile permissions regex`. If neither appears, the key isn't being read. |
 | Server starts fine but behaves as if no regex is set | A broken regex is discarded with only a warning, and a misspelled key is ignored with no warning at all | As above. There is no setting that makes either one fail startup. |
-| Roles are in the ID token but not the access token | The default claim mapper only reads the `Authorization` header (access token) | Configure the IdP to add the roles claim to the access token. See [Check which token reaches the server](ui-walkthrough.md#check-which-token-reaches-the-server). |
+| Roles are in the ID token but not the access token | The default claim mapper only reads the `Authorization` header (access token) | Configure the IdP to add the roles claim to the access token. See [Inspecting tokens and requests in developer tools](ui-walkthrough.md#inspecting-tokens-and-requests-in-developer-tools). |
 | `unexpected value type of "sub" claim` or `malformed token - no "kid" header` | The default mapper requires a string `sub` claim and a `kid` JWT header | Configure the IdP to include both (most do by default). |
 
 ## Caveats
@@ -46,7 +46,7 @@
 | The default mapper reads only the `Authorization` header, not `Authorization-Extras` | Source (`GetClaims` uses `AuthInfo.AuthToken`). In the e2e stack the ID token has no `roles` and the UI still works, so the server must be using the access token. |
 | The default mapper requires a `kid` header and a string `sub` claim | Source (`parseJWTWithAudience`, `GetClaims`); the Go demo sets both |
 | `authorization.NewDefaultAuthorizer()` takes no arguments | Ran: Go demo E, F, G call it |
-| UI 2.53.3 sends the ID token in `Authorization-Extras` | UI server log: `Validating ID token from Authorization-Extras header`. The Network-tab steps in the [UI walkthrough](ui-walkthrough.md#check-which-token-reaches-the-server) weren't run as written. |
+| UI 2.53.3 sends the ID token in `Authorization-Extras` | UI server log: `Validating ID token from Authorization-Extras header`. Not yet checked in the Network tab ([steps](ui-walkthrough.md#which-header-carries-which-token)). |
 | The UI's 403 behavior on server 1.31.2 | **From [#11639](https://github.com/temporalio/temporal/issues/11639)**; this repo tested only 1.32.1. The authorizer code involved is the same. |
 
 ## Version requirements
@@ -87,6 +87,6 @@ and in PR #7574.
 | `e2e/verify.sh` | Calls the server as each test user and prints allow/deny |
 | `e2e/dynamicconfig/docker.yaml` | Empty dynamic config file, required by the server image |
 | `README.md` | Overview: the problem, the fix, and a 5-minute check in the UI |
-| `docs/ui-walkthrough.md` | Full UI walkthrough (Tests A–D), `verify.sh`, how to inspect the token |
+| `docs/ui-walkthrough.md` | Full UI walkthrough (Tests A–D), `verify.sh`, inspecting tokens and requests in developer tools |
 | `docs/go-demo.md` | Go demo scenarios A–H and their output |
 | `docs/reference.md` | This document |

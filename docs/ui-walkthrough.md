@@ -62,8 +62,9 @@ window**, so you're logged out.
 ### Test A: namespace roles only, the UI is blocked (the customer's problem)
 
 1. Open http://localhost:8233.
-2. Optional: open the browser's developer tools on the **Network** tab, so you
-   can see the 403.
+2. Optional: to see the 403, open developer tools on the **Network** tab and
+   tick **Keep log** first. See
+   [Seeing the 403s in the Network tab](#seeing-the-403s-in-the-network-tab).
 3. Click **Continue to SSO**.
 4. Log in as **`ns-only`**.
 
@@ -199,29 +200,90 @@ docker compose -f e2e/compose.yaml down
 Keycloak puts the user's roles in a `roles` claim **in the access token only**
 (not the ID token), which is what the Temporal server reads.
 
-## Check which token reaches the server
+## Inspecting tokens and requests in developer tools
 
-The default claim mapper reads only the `Authorization` header (the access
-token). The UI also sends the ID token, in an `Authorization-Extras` header,
-but the default claim mapper never reads it. So the roles claim must be in the
-**access token**.
+Use these when you need to see what the browser is actually sending: the 403s,
+the tokens, and the roles inside them. All of it stays on your machine.
 
-To check what your UI is sending:
+### Seeing the 403s in the Network tab
 
-1. Open the UI, then the browser's developer tools, **Network** tab.
-2. Reload and select the request to `/api/v1/namespaces`.
-3. Under **Request Headers**, copy the value after `Authorization: Bearer `.
-4. Decode its middle segment **locally**. Don't paste tokens into public
-   websites; they're live credentials. For example:
+1. Open developer tools and go to the **Network** tab.
+2. Tick **Keep log** (some versions of Chrome call it **Preserve log**).
+3. Optional: click the **Fetch/XHR** filter to hide JavaScript, CSS and images.
+4. Log in.
+
+**Keep log** matters because, after the 403, the UI loads a whole new login
+page. Chrome clears the Network tab on every page load, so without it the
+403s disappear before you can see them.
+
+With the 403 problem you'll see `namespaces` and `cluster-info` with status
+**403**, followed by a new `login` request.
+
+### Finding the tokens
+
+The UI keeps both tokens in the browser's local storage:
+
+1. Log in as **`ns-plus-system`**, so you stay logged in.
+2. Open developer tools and go to the **Application** tab.
+3. In the sidebar, open **Storage → Local storage → http://localhost:8233**.
+4. Click the **`AuthUser`** entry. Its value has these fields:
+
+| Field | What it is |
+|---|---|
+| `accessToken` | The token the Temporal server checks. It must contain `roles`. |
+| `idToken` | Identifies who logged in. In this demo it has no `roles`. |
+| `email`, `name` | The logged-in user |
+
+The tokens start with `eyJ` because they're encoded. Decode them to read them.
+
+### Decoding the tokens in the browser (easiest)
+
+Paste this into the **Console** tab. It decodes both tokens in your browser,
+without sending them anywhere:
+
+```js
+const u = JSON.parse(localStorage.getItem('AuthUser'));
+const dec = t => JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+console.log('access token:', dec(u.accessToken));
+console.log('id token:', dec(u.idToken));
+```
+
+**Expected for `ns-plus-system`:** the access token has
+`roles: ["xyz-deployment_ROLE_write", "temporal-system_ROLE_read", "xyz-deployment_ROLE_read", "xyz-deployment_ROLE_admin"]`
+(in any order), and the ID token has no `roles`. Because the UI works even
+though the ID token has no roles, the server must be reading the access token.
+
+### Decoding a token in the terminal (macOS)
+
+1. Copy **only the token**: the text starting with `eyJ`, without `Bearer `
+   in front and without quotes.
+2. Run this. Don't type or paste anything after it; `pbpaste` reads the
+   clipboard:
 
    ```bash
-   pbpaste | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq '{sub, roles}'
+   pbpaste | cut -d. -f2 | tr '_-' '/+' | { read -r p; while (( ${#p} % 4 )); do p+="="; done; echo "$p"; } | base64 -d | jq '{sub, roles}'
    ```
 
-   (Add one or two `=` to the end of the segment if `base64` complains about
-   padding.)
+The middle step adds the `=` padding that tokens leave off. Without it, macOS
+`base64` drops the end of the data and `jq` fails with
+`Unfinished JSON term at EOF`.
 
-If `roles` is missing there but present in the ID token, fix the IdP's claim
-mapping, for example the Keycloak "realm roles" mapper's **Add to access
-token** setting. Don't switch the UI to `useIdTokenAsBearer` just to get roles
-through.
+Don't paste tokens into public decoding websites. Even in a demo, they're
+live credentials until they expire.
+
+### Which header carries which token
+
+The UI sends the **access token** in the `Authorization: Bearer …` header and
+the **ID token** in an `Authorization-Extras` header. The Temporal server's
+default claim mapper reads only `Authorization`, so the `roles` claim must be
+in the **access token**.
+
+To see the headers: with **Keep log** on, click a request such as `namespaces`
+and look under **Request Headers**. (The `Authorization-Extras` part comes
+from the UI server's log, `Validating ID token from Authorization-Extras
+header`; these Network-tab steps haven't been checked yet.)
+
+If `roles` is missing from the access token but present in the ID token, fix
+the IdP's claim mapping, for example the Keycloak "realm roles" mapper's
+**Add to access token** setting. Don't switch the UI to `useIdTokenAsBearer`
+just to get roles through.

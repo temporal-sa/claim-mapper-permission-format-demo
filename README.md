@@ -81,6 +81,7 @@ ports, and the UI shows a blank page if both are running.
 
 | Document | What's in it |
 |---|---|
-| [UI walkthrough](docs/ui-walkthrough.md) | All four UI tests, including the caveat and the broken regex, how to see the 403, `verify.sh`, and how to check which token reaches the server |
+| [UI walkthrough](docs/ui-walkthrough.md) | All four UI tests, including the caveat and the broken regex, and `verify.sh` |
+| [Inspecting tokens in developer tools](docs/ui-walkthrough.md#inspecting-tokens-and-requests-in-developer-tools) | How to see the 403s, find the tokens in the browser, decode them, and check which header carries which token |
 | [Go demo](docs/go-demo.md) | `go run .`: runs the real server code on test tokens for every format and failure mode, with no Docker needed |
 | [Reference](docs/reference.md) | Troubleshooting, caveats, what was confirmed and how, versions, source links, files |
